@@ -1,12 +1,12 @@
-import {inject, Injectable} from '@angular/core';
-import {Subject} from 'rxjs';
-import {switchMap, takeUntil, tap} from 'rxjs/operators';
-import {of} from 'rxjs';
-import {Annotation} from '../../../../../shared/service/annotation.service';
-import {ReaderViewManagerService} from '../../core/view-manager.service';
-import {ReaderAnnotationHttpService} from '../annotations/annotation.service';
-import {ReaderLeftSidebarService} from '../../layout/panel/panel.service';
-import {TextSelectionAction, AnnotationStyle} from '../../shared/selection-popup.component';
+import { inject, Injectable } from '@angular/core';
+import { Subject } from 'rxjs';
+import { switchMap, takeUntil, tap } from 'rxjs/operators';
+import { of } from 'rxjs';
+import { Annotation } from '../../../../../shared/service/annotation.service';
+import { ReaderViewManagerService } from '../../core/view-manager.service';
+import { ReaderAnnotationHttpService } from '../annotations/annotation.service';
+import { ReaderLeftSidebarService } from '../../layout/panel/panel.service';
+import { TextSelectionAction, AnnotationStyle } from '../../shared/selection-popup.component';
 
 export interface SelectionState {
   visible: boolean;
@@ -112,6 +112,16 @@ export class ReaderSelectionService {
       this.clearPreview();
       this.viewManager.clearSelection();
       this.leftSidebarService.openWithSearch(action.searchText);
+      this.emitState();
+    } else if (action.type === 'google-search' && action.searchText) {
+      this.clearPreview();
+      this.viewManager.clearSelection();
+      this.openSearchModal(action.searchText, 'search');
+      this.emitState();
+    } else if (action.type === 'dictionary' && action.searchText) {
+      this.clearPreview();
+      this.viewManager.clearSelection();
+      this.openSearchModal(action.searchText, 'dictionary');
       this.emitState();
     } else if (action.type === 'delete' && action.annotationId) {
       this.clearPreview();
@@ -221,7 +231,7 @@ export class ReaderSelectionService {
       // Check if character ranges actually overlap
       // Two ranges [a, b] and [c, d] overlap if a < d AND c < b
       if (selectionRange.startOffset < annotationRange.endOffset &&
-          annotationRange.startOffset < selectionRange.endOffset) {
+        annotationRange.startOffset < selectionRange.endOffset) {
         return annotation.id;
       }
     }
@@ -279,6 +289,18 @@ export class ReaderSelectionService {
     const basePath = `${parentPath}${startNodePath}`;
 
     return { basePath, startOffset, endOffset };
+  }
+
+
+  /**
+   * Opens search modal with the given text and mode.
+   * Emits an event that the reader component listens to.
+   */
+  private searchModalSubject = new Subject<{ text: string; mode: 'search' | 'dictionary' }>();
+  public searchModal$ = this.searchModalSubject.asObservable();
+
+  private openSearchModal(searchText: string, mode: 'search' | 'dictionary'): void {
+    this.searchModalSubject.next({ text: searchText, mode });
   }
 
   private emitState(): void {

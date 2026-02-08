@@ -1,11 +1,11 @@
-import {Component, EventEmitter, Input, Output} from '@angular/core';
-import {CommonModule} from '@angular/common';
-import {ReaderIconComponent} from './icon.component';
+import { Component, EventEmitter, Input, Output } from '@angular/core';
+import { CommonModule } from '@angular/common';
+import { ReaderIconComponent } from './icon.component';
 
 export type AnnotationStyle = 'highlight' | 'underline' | 'strikethrough' | 'squiggly';
 
 export interface TextSelectionAction {
-  type: 'select' | 'annotate' | 'delete' | 'dismiss' | 'preview' | 'search' | 'note';
+  type: 'select' | 'annotate' | 'delete' | 'dismiss' | 'preview' | 'search' | 'note' | 'google-search' | 'dictionary';
   color?: string;
   style?: AnnotationStyle;
   annotationId?: number;
@@ -32,7 +32,7 @@ export class TextSelectionPopupComponent {
   }
   private _visible = false;
 
-  @Input() position = {x: 0, y: 0};
+  @Input() position = { x: 0, y: 0 };
   @Input() showBelow = false;
   @Input() overlappingAnnotationId: number | null = null;
   @Input() selectedText = '';
@@ -44,19 +44,19 @@ export class TextSelectionPopupComponent {
   private hasPreview = false;
 
   highlightColors = [
-    {value: '#FACC15', label: 'Yellow'},
-    {value: '#4ADE80', label: 'Green'},
-    {value: '#38BDF8', label: 'Blue'},
-    {value: '#F472B6', label: 'Pink'},
-    {value: '#FB923C', label: 'Orange'}
+    { value: '#FACC15', label: 'Yellow' },
+    { value: '#4ADE80', label: 'Green' },
+    { value: '#38BDF8', label: 'Blue' },
+    { value: '#F472B6', label: 'Pink' },
+    { value: '#FB923C', label: 'Orange' }
   ];
 
   lineColors = [
-    {value: '#B8860B', label: 'Dark Gold'},
-    {value: '#228B22', label: 'Forest Green'},
-    {value: '#1E90FF', label: 'Dodger Blue'},
-    {value: '#DC143C', label: 'Crimson'},
-    {value: '#FF8C00', label: 'Dark Orange'}
+    { value: '#B8860B', label: 'Dark Gold' },
+    { value: '#228B22', label: 'Forest Green' },
+    { value: '#1E90FF', label: 'Dodger Blue' },
+    { value: '#DC143C', label: 'Crimson' },
+    { value: '#FF8C00', label: 'Dark Orange' }
   ];
 
   get colors() {
@@ -64,14 +64,14 @@ export class TextSelectionPopupComponent {
   }
 
   styles: { value: AnnotationStyle; label: string; icon: string }[] = [
-    {value: 'highlight', label: 'Highlight', icon: 'H'},
-    {value: 'underline', label: 'Underline', icon: 'U'},
-    {value: 'squiggly', label: 'Squiggly', icon: '~'},
-    {value: 'strikethrough', label: 'Strikethrough', icon: 'S'}
+    { value: 'highlight', label: 'Highlight', icon: 'H' },
+    { value: 'underline', label: 'Underline', icon: 'U' },
+    { value: 'squiggly', label: 'Squiggly', icon: '~' },
+    { value: 'strikethrough', label: 'Strikethrough', icon: 'S' }
   ];
 
   onSelect(): void {
-    this.action.emit({type: 'select'});
+    this.action.emit({ type: 'select' });
     this.showAnnotationOptions = false;
     this.hasPreview = false;
   }
@@ -111,18 +111,30 @@ export class TextSelectionPopupComponent {
 
   onDelete(): void {
     if (this.overlappingAnnotationId) {
-      this.action.emit({type: 'delete', annotationId: this.overlappingAnnotationId});
+      this.action.emit({ type: 'delete', annotationId: this.overlappingAnnotationId });
     }
   }
 
   onSearch(): void {
-    this.action.emit({type: 'search', searchText: this.selectedText});
+    this.action.emit({ type: 'search', searchText: this.selectedText });
     this.showAnnotationOptions = false;
     this.hasPreview = false;
   }
 
   onNote(): void {
-    this.action.emit({type: 'note'});
+    this.action.emit({ type: 'note' });
+    this.showAnnotationOptions = false;
+    this.hasPreview = false;
+  }
+
+  onGoogleSearch(): void {
+    this.action.emit({ type: 'google-search', searchText: this.selectedText });
+    this.showAnnotationOptions = false;
+    this.hasPreview = false;
+  }
+
+  onDictionary(): void {
+    this.action.emit({ type: 'dictionary', searchText: this.selectedText });
     this.showAnnotationOptions = false;
     this.hasPreview = false;
   }
@@ -138,7 +150,7 @@ export class TextSelectionPopupComponent {
         style: this.selectedStyle
       });
     } else {
-      this.action.emit({type: 'dismiss'});
+      this.action.emit({ type: 'dismiss' });
     }
 
     this.showAnnotationOptions = false;

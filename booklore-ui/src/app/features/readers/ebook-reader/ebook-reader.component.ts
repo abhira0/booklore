@@ -1,34 +1,35 @@
-import {Component, CUSTOM_ELEMENTS_SCHEMA, HostListener, inject, OnDestroy, OnInit} from '@angular/core';
-import {CommonModule} from '@angular/common';
-import {Observable, of, Subject, throwError} from 'rxjs';
-import {catchError, map, switchMap, takeUntil, tap} from 'rxjs/operators';
-import {MessageService} from 'primeng/api';
-import {ReaderLoaderService} from './core/loader.service';
-import {ReaderViewManagerService} from './core/view-manager.service';
-import {ReaderStateService} from './state/reader-state.service';
-import {ReaderStyleService} from './core/style.service';
-import {ReaderBookmarkService} from './features/bookmarks/bookmark.service';
-import {ReaderAnnotationHttpService} from './features/annotations/annotation.service';
-import {ReaderProgressService} from './state/progress.service';
-import {ReaderSelectionService} from './features/selection/selection.service';
-import {ReaderSidebarService} from './layout/sidebar/sidebar.service';
-import {ReaderLeftSidebarService} from './layout/panel/panel.service';
-import {ReaderHeaderService} from './layout/header/header.service';
-import {ReaderNoteService} from './features/notes/note.service';
-import {BookService} from '../../book/service/book.service';
-import {ActivatedRoute} from '@angular/router';
-import {Book, BookType} from '../../book/model/book.model';
-import {ReaderHeaderComponent} from './layout/header/header.component';
-import {ReaderSidebarComponent} from './layout/sidebar/sidebar.component';
-import {ReaderLeftSidebarComponent} from './layout/panel/panel.component';
-import {ReaderNavbarComponent} from './layout/footer/footer.component';
-import {ReaderSettingsDialogComponent} from './dialogs/settings-dialog.component';
-import {ReaderQuickSettingsComponent} from './layout/header/quick-settings.component';
-import {ReaderBookMetadataDialogComponent} from './dialogs/metadata-dialog.component';
-import {ReaderHeaderFooterVisibilityManager} from './shared/visibility.util';
-import {EpubCustomFontService} from './features/fonts/custom-font.service';
-import {TextSelectionAction, TextSelectionPopupComponent} from './shared/selection-popup.component';
-import {NoteDialogData, NoteDialogResult, ReaderNoteDialogComponent} from './dialogs/note-dialog.component';
+import { Component, CUSTOM_ELEMENTS_SCHEMA, HostListener, inject, OnDestroy, OnInit } from '@angular/core';
+import { CommonModule } from '@angular/common';
+import { Observable, of, Subject, throwError } from 'rxjs';
+import { catchError, map, switchMap, takeUntil, tap } from 'rxjs/operators';
+import { MessageService } from 'primeng/api';
+import { ReaderLoaderService } from './core/loader.service';
+import { ReaderViewManagerService } from './core/view-manager.service';
+import { ReaderStateService } from './state/reader-state.service';
+import { ReaderStyleService } from './core/style.service';
+import { ReaderBookmarkService } from './features/bookmarks/bookmark.service';
+import { ReaderAnnotationHttpService } from './features/annotations/annotation.service';
+import { ReaderProgressService } from './state/progress.service';
+import { ReaderSelectionService } from './features/selection/selection.service';
+import { ReaderSidebarService } from './layout/sidebar/sidebar.service';
+import { ReaderLeftSidebarService } from './layout/panel/panel.service';
+import { ReaderHeaderService } from './layout/header/header.service';
+import { ReaderNoteService } from './features/notes/note.service';
+import { BookService } from '../../book/service/book.service';
+import { ActivatedRoute } from '@angular/router';
+import { Book, BookType } from '../../book/model/book.model';
+import { ReaderHeaderComponent } from './layout/header/header.component';
+import { ReaderSidebarComponent } from './layout/sidebar/sidebar.component';
+import { ReaderLeftSidebarComponent } from './layout/panel/panel.component';
+import { ReaderNavbarComponent } from './layout/footer/footer.component';
+import { ReaderSettingsDialogComponent } from './dialogs/settings-dialog.component';
+import { ReaderQuickSettingsComponent } from './layout/header/quick-settings.component';
+import { ReaderBookMetadataDialogComponent } from './dialogs/metadata-dialog.component';
+import { ReaderHeaderFooterVisibilityManager } from './shared/visibility.util';
+import { EpubCustomFontService } from './features/fonts/custom-font.service';
+import { TextSelectionAction, TextSelectionPopupComponent } from './shared/selection-popup.component';
+import { NoteDialogData, NoteDialogResult, ReaderNoteDialogComponent } from './dialogs/note-dialog.component';
+import { SearchModalComponent } from './features/search/search-modal.component';
 
 @Component({
   selector: 'app-ebook-reader',
@@ -43,7 +44,8 @@ import {NoteDialogData, NoteDialogResult, ReaderNoteDialogComponent} from './dia
     ReaderLeftSidebarComponent,
     ReaderNavbarComponent,
     TextSelectionPopupComponent,
-    ReaderNoteDialogComponent
+    ReaderNoteDialogComponent,
+    SearchModalComponent
   ],
   schemas: [CUSTOM_ELEMENTS_SCHEMA],
   providers: [
@@ -102,13 +104,17 @@ export class EbookReaderComponent implements OnInit, OnDestroy {
   sectionFractions: number[] = [];
 
   showSelectionPopup = false;
-  popupPosition = {x: 0, y: 0};
+  popupPosition = { x: 0, y: 0 };
   showPopupBelow = false;
   overlappingAnnotationId: number | null = null;
   selectedText = '';
 
   showNoteDialog = false;
   noteDialogData: NoteDialogData | null = null;
+
+  showSearchModal = false;
+  searchModalText = '';
+  searchModalMode: 'search' | 'dictionary' = 'search';
 
   get currentProgressData(): any {
     return this.progressService.currentProgressData;
@@ -142,6 +148,22 @@ export class EbookReaderComponent implements OnInit, OnDestroy {
         this.showNoteDialog = state.visible;
         this.noteDialogData = state.data;
       });
+
+    this.selectionService.searchModal$
+      .pipe(takeUntil(this.destroy$))
+      .subscribe(data => {
+        // Close any existing modal first to prevent duplicates
+        this.showSearchModal = false;
+
+        // Use setTimeout to ensure proper change detection cycle
+        setTimeout(() => {
+          this.searchModalText = data.text;
+          this.searchModalMode = data.mode;
+          this.showSearchModal = true;
+        }, 0);
+      });
+
+
 
     this.headerService.showControls$
       .pipe(takeUntil(this.destroy$))
@@ -229,10 +251,10 @@ export class EbookReaderComponent implements OnInit, OnDestroy {
         }
 
         return this.stateService.initializeState(this.bookId, bookFileId!).pipe(
-          map(() => ({book, bookType, bookFileId}))
+          map(() => ({ book, bookType, bookFileId }))
         );
       }),
-      switchMap(({book, bookType, bookFileId}) => {
+      switchMap(({ book, bookType, bookFileId }) => {
         this.progressService.initialize(this.bookId, bookType, bookFileId);
         this.selectionService.initialize(this.bookId, this.destroy$);
         this.headerService.initialize(this.bookId, book.metadata?.title || '', this.destroy$);

@@ -1,0 +1,107 @@
+@if (visible) {
+<div class="modal-backdrop" (click)="onBackdropClick($event)">
+    <div class="modal-container" [ngStyle]="getModalStyles()">
+        <div class="modal-header" [ngStyle]="getHeaderStyles()">
+            <input type="text" class="search-input" [(ngModel)]="editableSearchText" (keyup.enter)="onSearchChange()"
+                [ngStyle]="getTextStyles()" placeholder="Enter search term..." #searchInput>
+            <button class="search-btn" (click)="onSearchChange()" title="Search" [style.color]="getLinkColor()">
+                <app-reader-icon name="search" [size]="20"></app-reader-icon>
+            </button>
+            <button class="close-btn" (click)="onClose()" title="Close" [ngStyle]="getTextStyles()">
+                <app-reader-icon name="close" [size]="20"></app-reader-icon>
+            </button>
+        </div>
+
+        <div class="modal-tabs" [ngStyle]="getTabStyles()">
+            <button class="tab-btn" [class.active]="currentMode === 'search'" [ngStyle]="getTextStyles()"
+                [style.border-bottom-color]="currentMode === 'search' ? getLinkColor() : 'transparent'"
+                [style.border-right]="getBorderRight()" (click)="switchMode('search')">
+                <img src="assets/icons/google.svg" class="tab-icon brand-icon" alt="Google">
+                Google
+            </button>
+            <button class="tab-btn" [class.active]="currentMode === 'wikipedia'" [ngStyle]="getTextStyles()"
+                [style.border-bottom-color]="currentMode === 'wikipedia' ? getLinkColor() : 'transparent'"
+                [style.border-right]="getBorderRight()" (click)="switchMode('wikipedia')">
+                <img src="assets/icons/wikipedia.svg" class="tab-icon brand-icon" alt="Wikipedia">
+                Wikipedia
+            </button>
+            <button class="tab-btn" [class.active]="currentMode === 'dictionary'" [ngStyle]="getTextStyles()"
+                [style.border-bottom-color]="currentMode === 'dictionary' ? getLinkColor() : 'transparent'"
+                [style.border-right]="getBorderRight()" (click)="switchMode('dictionary')">
+                <app-reader-icon name="book" [size]="16"></app-reader-icon>
+                Dictionary
+            </button>
+        </div>
+
+        <div class="modal-content" [ngStyle]="getContentStyles()">
+            @if (isLoading) {
+            <div class="loading" [ngStyle]="getTextStyles()">
+                <div class="spinner" [style.border-color]="getLinkColor()" [style.opacity]="0.2"></div>
+                <p>Loading...</p>
+            </div>
+            }
+
+            <!-- Dictionary Results -->
+            <div class="dictionary-content" [style.display]="currentMode === 'dictionary' ? 'block' : 'none'">
+                @if (dictionaryResults.length > 0) {
+                @for (entry of dictionaryResults; track $index) {
+                <div class="dictionary-entry">
+                    <div class="word-header">
+                        <h2 [ngStyle]="getTextStyles()">{{ entry.word }}</h2>
+                        @if (entry.phonetic) {
+                        <span class="phonetic" [ngStyle]="getTextStyles()">{{ entry.phonetic }}</span>
+                        }
+                        @for (phonetic of entry.phonetics; track $index) {
+                        @if (phonetic.audio) {
+                        <button class="audio-btn" (click)="playAudio(phonetic.audio)" title="Play pronunciation"
+                            [style.background-color]="getLinkColor()">
+                            <app-reader-icon name="play" [size]="14"></app-reader-icon>
+                        </button>
+                        }
+                        }
+                    </div>
+
+                    @for (meaning of entry.meanings; track $index) {
+                    <div class="meaning">
+                        <h3 class="part-of-speech" [style.color]="getLinkColor()">{{ meaning.partOfSpeech }}</h3>
+                        <ol class="definitions">
+                            @for (def of meaning.definitions; track $index) {
+                            <li>
+                                <p class="definition" [ngStyle]="getTextStyles()">{{ def.definition }}</p>
+                                @if (def.example) {
+                                <p class="example" [ngStyle]="getTextStyles()">"{{ def.example }}"</p>
+                                }
+                                @if (def.synonyms && def.synonyms.length > 0) {
+                                <div class="synonyms" [ngStyle]="getTextStyles()">
+                                    <strong>Synonyms: </strong>
+                                    {{ def.synonyms.join(', ') }}
+                                </div>
+                                }
+                            </li>
+                            }
+                        </ol>
+                    </div>
+                    }
+                </div>
+                }
+                } @else if (dictionaryError) {
+                <div class="error-message" [ngStyle]="getTextStyles()">
+                    <p>No dictionary definition found for "{{ searchText }}"</p>
+                </div>
+                }
+            </div>
+
+            <!-- Google Search Container (Cached) -->
+            <div #searchContainer class="iframe-container"
+                [style.display]="currentMode === 'search' ? 'block' : 'none'">
+            </div>
+
+            <!-- Wikipedia Container (Cached) -->
+            <div #wikipediaContainer class="iframe-container"
+                [style.display]="currentMode === 'wikipedia' ? 'block' : 'none'">
+            </div>
+
+        </div>
+    </div>
+</div>
+}
