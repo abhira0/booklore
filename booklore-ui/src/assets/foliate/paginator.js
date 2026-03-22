@@ -824,8 +824,11 @@ export class Paginator extends HTMLElement {
         const touch = e.changedTouches[0]
         this.#touchState = {
             x: touch?.screenX, y: touch?.screenY,
+            startX: touch?.screenX, startY: touch?.screenY,
             t: e.timeStamp,
-            vx: 0, xy: 0,
+            startTime: e.timeStamp,
+            vx: 0, vy: 0,
+            moved: false,
         }
     }
     #onTouchMove(e) {
@@ -837,29 +840,75 @@ export class Paginator extends HTMLElement {
             if (this.#touchScrolled) e.preventDefault()
             return
         }
-        e.preventDefault()
+
         const touch = e.changedTouches[0]
         const x = touch.screenX, y = touch.screenY
-        const dx = state.x - x, dy = state.y - y
-        const dt = e.timeStamp - state.t
-        state.x = x
-        state.y = y
-        state.t = e.timeStamp
-        state.vx = dx / dt
-        state.vy = dy / dt
-        this.#touchScrolled = true
-        this.scrollBy(dx, dy)
+
+        // Calculate total movement from start
+        const totalDx = Math.abs(x - state.startX)
+        const totalDy = Math.abs(y - state.startY)
+        const elapsed = e.timeStamp - state.startTime
+
+        // Check if there's an active text selection
+        const doc = this.#view?.document
+        const selection = doc?.getSelection?.()
+        const hasSelection = selection && !selection.isCollapsed && selection.rangeCount > 0
+
+        // If there's already a selection, don't interfere - allow extending it
+        if (hasSelection) {
+            return
+        }
+
+        // Determine if this is a swipe gesture:
+        // - Horizontal movement > 15px
+        // - Horizontal > vertical (directional)
+        // - Fast enough (velocity > 0.3 px/ms) OR significant distance
+        const isHorizontalSwipe = totalDx > 15 && totalDx > totalDy * 1.5
+        const velocity = elapsed > 0 ? totalDx / elapsed : 0
+        const isFastSwipe = velocity > 0.3 || totalDx > 50
+
+        if (isHorizontalSwipe && isFastSwipe && !state.moved) {
+            // This is a page swipe - take over
+            state.moved = true
+        }
+
+        // Only prevent default and scroll if we've committed to swiping
+        if (state.moved) {
+            e.preventDefault()
+            const dx = state.x - x, dy = state.y - y
+            const dt = e.timeStamp - state.t
+            state.x = x
+            state.y = y
+            state.t = e.timeStamp
+            state.vx = dx / dt
+            state.vy = dy / dt
+            this.#touchScrolled = true
+            this.scrollBy(dx, dy)
+        }
+        // If not swiping, allow native behavior (potential text selection)
     }
     #onTouchEnd() {
+        const state = this.#touchState
+
+        // Check for active text selection - don't snap if user selected text
+        const doc = this.#view?.document
+        const selection = doc?.getSelection?.()
+        const hasSelection = selection && !selection.isCollapsed && selection.rangeCount > 0
+
         this.#touchScrolled = false
+
         if (this.scrolled) return
 
+        // Don't snap if there's a selection
+        if (hasSelection) return
+
+        // Only snap if we were actually doing a page swipe
+        if (!state.moved) return
+
         // XXX: Firefox seems to report scale as 1... sometimes...?
-        // at this point I'm basically throwing `requestAnimationFrame` at
-        // anything that doesn't work
         requestAnimationFrame(() => {
             if (globalThis.visualViewport.scale === 1)
-                this.snap(this.#touchState.vx, this.#touchState.vy)
+                this.snap(state.vx, state.vy)
         })
     }
     // allows one to process rects as if they were LTR and horizontal
@@ -1001,7 +1050,7 @@ export class Paginator extends HTMLElement {
     #canGoToIndex(index) {
         return index >= 0 && index <= this.sections.length - 1
     }
-    async #goTo({ index, anchor, select}) {
+    async #goTo({ index, anchor, select }) {
         if (index === this.#index) await this.#display({ index, anchor, select })
         else {
             const oldIndex = this.#index

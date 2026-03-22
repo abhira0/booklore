@@ -74,7 +74,17 @@ export class ReaderSelectionService {
     this.annotations = annotations;
   }
 
-  handleTextSelected(detail: SelectionDetail, popupPosition?: { x: number; y: number; showBelow?: boolean }): void {
+  handleTextSelected(detail: SelectionDetail | null, popupPosition?: { x: number; y: number; showBelow?: boolean }): void {
+    // Handle dismiss (tap to clear selection)
+    if (!detail) {
+      this._visible = false;
+      this._overlappingAnnotationId = null;
+      this.currentSelection = null;
+      this.clearPreview();
+      this.emitState();
+      return;
+    }
+
     this.currentSelection = detail;
     this._overlappingAnnotationId = this.findOverlappingAnnotation(detail.cfi);
     this._visible = true;

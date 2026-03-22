@@ -1,6 +1,6 @@
-import {inject, Injectable} from '@angular/core';
-import {Subject} from 'rxjs';
-import {ReaderAnnotationService} from '../features/annotations/annotation-renderer.service';
+import { inject, Injectable } from '@angular/core';
+import { Subject } from 'rxjs';
+import { ReaderAnnotationService } from '../features/annotations/annotation-renderer.service';
 
 export interface ViewEvent {
   type: 'load' | 'relocate' | 'error' | 'middle-single-tap' | 'draw-annotation' | 'show-annotation' | 'text-selected';
@@ -45,10 +45,12 @@ export class ReaderEventService {
 
   private touchStartX = 0;
   private touchStartY = 0;
-  private isTextSelectionInProgress = false;
   private touchStartTime = 0;
   private selectionChangeTimeout: ReturnType<typeof setTimeout> | null = null;
   private lastTouchTime = 0;
+  private hadSelectionOnTouchStart = false;
+  private isTouchActive = false;
+  private isBlinking = false;
 
   private eventSubject = new Subject<ViewEvent>();
   public events$ = this.eventSubject.asObservable();
@@ -79,7 +81,7 @@ export class ReaderEventService {
     if (!this.view) return;
 
     this.view.addEventListener('load', (e: any) => {
-      this.eventSubject.next({type: 'load', detail: e.detail});
+      this.eventSubject.next({ type: 'load', detail: e.detail });
       if (e.detail?.doc) {
         if (this.keydownHandler) {
           e.detail.doc.addEventListener('keydown', this.keydownHandler);
@@ -91,32 +93,32 @@ export class ReaderEventService {
       if (allAnnotations.length > 0 && this.view) {
         setTimeout(() => {
           allAnnotations.forEach(annotation => {
-            this.view?.addAnnotation({value: annotation.value});
+            this.view?.addAnnotation({ value: annotation.value });
           });
         }, 100);
       }
     });
 
     this.view.addEventListener('relocate', (e: any) => {
-      this.eventSubject.next({type: 'relocate', detail: e.detail});
+      this.eventSubject.next({ type: 'relocate', detail: e.detail });
     });
 
     this.view.addEventListener('error', (e: any) => {
-      this.eventSubject.next({type: 'error', detail: e.detail});
+      this.eventSubject.next({ type: 'error', detail: e.detail });
     });
 
     this.view.addEventListener('draw-annotation', (e: any) => {
-      const {draw, annotation, doc, range} = e.detail;
+      const { draw, annotation, doc, range } = e.detail;
       const storedStyle = this.annotationService.getAnnotationStyle(annotation.value);
       if (storedStyle) {
         const overlayerStyle = this.annotationService.getOverlayerDrawFunction(storedStyle.style);
-        draw(overlayerStyle, {color: storedStyle.color});
+        draw(overlayerStyle, { color: storedStyle.color });
       }
-      this.eventSubject.next({type: 'draw-annotation', detail: {annotation, doc, range}});
+      this.eventSubject.next({ type: 'draw-annotation', detail: { annotation, doc, range } });
     });
 
     this.view.addEventListener('show-annotation', (e: any) => {
-      this.eventSubject.next({type: 'show-annotation', detail: e.detail});
+      this.eventSubject.next({ type: 'show-annotation', detail: e.detail });
     });
   }
 
@@ -188,22 +190,33 @@ export class ReaderEventService {
 
     doc.addEventListener('touchstart', (event: TouchEvent) => {
       this.handleTouchStart(event, doc);
-    }, {passive: true});
+    }, { passive: true });
 
     doc.addEventListener('touchmove', (event: TouchEvent) => {
       this.handleTouchMove(event, doc);
-    }, {passive: false});
+    }, { passive: false });
 
     doc.addEventListener('touchend', (event: TouchEvent) => {
       this.handleTouchEnd(event, doc);
-    }, {passive: false});
+    }, { passive: false });
+
+    doc.addEventListener('touchcancel', (event: TouchEvent) => {
+      this.handleTouchCancel(event);
+    }, { passive: false });
 
     doc.addEventListener('contextmenu', (event: MouseEvent) => {
+      // On touch devices, always prevent native context menu to suppress iOS Copy/Define popup
+      if ('ontouchstart' in window || navigator.maxTouchPoints > 0) {
+        event.preventDefault();
+        event.stopPropagation();
+        return;
+      }
+      // On desktop, only prevent if there's a selection
       const selection = doc.defaultView?.getSelection();
       if (selection && !selection.isCollapsed) {
         event.preventDefault();
       }
-    });
+    }, { capture: true });
 
     doc.addEventListener('selectionchange', () => {
       this.handleSelectionChange(doc);
@@ -217,6 +230,10 @@ export class ReaderEventService {
       clearTimeout(this.selectionChangeTimeout);
     }
 
+    // Don't process (and Blink) while user is touching/dragging
+    if (this.isTouchActive || this.isBlinking) return;
+
+    // Debounce selection changes (200ms) to detect "pause" in selection if no touch involved
     this.selectionChangeTimeout = setTimeout(() => {
       const selection = doc.defaultView?.getSelection();
       if (!selection || selection.isCollapsed || selection.rangeCount === 0) {
@@ -230,166 +247,203 @@ export class ReaderEventService {
       if ('ontouchstart' in window || navigator.maxTouchPoints > 0) {
         this.handleSelectionEnd(doc);
       }
-    }, 300);
+    }, 200);
   }
 
   private injectMobileSelectionStyles(doc: Document): void {
-    const styleId = 'booklore-mobile-selection-styles';
-    if (doc.getElementById(styleId)) return;
-
-    const style = doc.createElement('style');
-    style.id = styleId;
-    style.textContent = `
-      * {
-        -webkit-touch-callout: none !important;
-        -webkit-user-select: text !important;
-        user-select: text !important;
-      }
-    `;
-    doc.head.appendChild(style);
+    // Iframe: force selection allowed + suppress callout
+    this.applySelectionStyles(doc, true);
+    // Main doc: suppress callout only (don't force selection on UI)
+    this.applySelectionStyles(document, false);
   }
 
-  private handleTouchStart(event: TouchEvent, _doc: Document): void {
+  private applySelectionStyles(targetDoc: Document, forceTextSelect: boolean): void {
+    const styleId = 'booklore-mobile-selection-styles';
+    if (targetDoc.getElementById(styleId)) return;
+
+    const style = targetDoc.createElement('style');
+    style.id = styleId;
+
+    // Base styles: suppress callout (menu) on everything, remove tap highlight
+    let css = `
+      * {
+        -webkit-touch-callout: none !important;
+        -webkit-tap-highlight-color: transparent !important;
+      }
+    `;
+
+    // For book content (iframe), we MUST ensure text is selectable
+    if (forceTextSelect) {
+      css += `
+        * {
+          -webkit-user-select: text !important;
+          user-select: text !important;
+        }
+        *::selection {
+          background-color: rgba(0, 122, 255, 0.3) !important;
+        }
+      `;
+    }
+
+    style.textContent = css;
+    targetDoc.head.appendChild(style);
+  }
+
+  private handleTouchStart(event: TouchEvent, doc: Document): void {
     if (event.touches.length !== 1) return;
 
+    this.isTouchActive = true;
     const touch = event.touches[0];
     this.touchStartX = touch.clientX;
     this.touchStartY = touch.clientY;
     this.touchStartTime = Date.now();
-    this.isTextSelectionInProgress = false;
 
-    this.longHoldTimeout = setTimeout(() => {
-      this.longHoldTimeout = null;
-    }, this.LONG_HOLD_THRESHOLD_MS);
+    // Remember if there was already a selection when touch started
+    const selection = doc.defaultView?.getSelection();
+    this.hadSelectionOnTouchStart = !!(selection && !selection.isCollapsed && selection.rangeCount > 0);
   }
 
-  private handleTouchMove(event: TouchEvent, doc: Document): void {
-    if (event.touches.length !== 1) return;
+  private handleTouchCancel(_event: TouchEvent): void {
+    this.isTouchActive = false;
+    this.isBlinking = false; // Safety reset
+  }
 
-    const touch = event.touches[0];
-    const deltaX = Math.abs(touch.clientX - this.touchStartX);
-    const deltaY = Math.abs(touch.clientY - this.touchStartY);
-
-    const selection = doc.defaultView?.getSelection();
-    if (selection && !selection.isCollapsed && selection.rangeCount > 0) {
-      this.isTextSelectionInProgress = true;
-      event.preventDefault();
-      return;
-    }
-
-    if (deltaX > 10 && deltaX > deltaY && !this.isTextSelectionInProgress) {
-      return;
-    }
+  private handleTouchMove(_event: TouchEvent, _doc: Document): void {
+    // Let paginator.js handle swipe vs selection detection
+    // We only care about selection results after touchend
   }
 
   private handleTouchEnd(event: TouchEvent, doc: Document): void {
-    const touchEndTime = Date.now();
-    const touchDuration = touchEndTime - this.touchStartTime;
-    this.lastTouchTime = touchEndTime;
+    this.lastTouchTime = Date.now();
+    this.isTouchActive = false;
+    const touchDuration = Date.now() - this.touchStartTime;
+
+    if (event.changedTouches.length !== 1) return;
+
+    const touch = event.changedTouches[0];
+    const deltaX = Math.abs(touch.clientX - this.touchStartX);
+    const deltaY = Math.abs(touch.clientY - this.touchStartY);
+    const isQuickTap = touchDuration < 200 && deltaX < 10 && deltaY < 10;
 
     const selection = doc.defaultView?.getSelection();
     const hasSelection = selection && !selection.isCollapsed && selection.rangeCount > 0;
 
+    // If there's ANY selection (new or extended), show our popup
+    // We trigger this ON TOUCH END to ensure we capture the final state
     if (hasSelection) {
-      this.isTextSelectionInProgress = false;
-      event.preventDefault();
-
       setTimeout(() => {
         this.handleSelectionEnd(doc);
-      }, 50);
+      }, 100); // Standard delay for reliability
       return;
     }
 
-    if (!this.isTextSelectionInProgress && event.changedTouches.length === 1) {
-      const touch = event.changedTouches[0];
-      const deltaX = touch.clientX - this.touchStartX;
-      const deltaY = Math.abs(touch.clientY - this.touchStartY);
-
-      if (Math.abs(deltaX) >= this.SWIPE_THRESHOLD_PX && Math.abs(deltaX) > deltaY) {
-        if (this.isNavigating) return;
-
-        this.isNavigating = true;
-        if (deltaX < 0) {
-          this.viewCallbacks?.next();
-        } else {
-          this.viewCallbacks?.prev();
-        }
-        setTimeout(() => this.isNavigating = false, 300);
+    // Quick tap with NO selection - handle as tap action
+    if (isQuickTap) {
+      // If there was a selection before but now there isn't, user cleared it via native UI
+      if (this.hadSelectionOnTouchStart) {
+        this.eventSubject.next({ type: 'text-selected', detail: null });
         return;
       }
 
-      if (touchDuration < this.LONG_HOLD_THRESHOLD_MS && Math.abs(deltaX) < 10 && deltaY < 10) {
-        const iframe = doc.defaultView?.frameElement as HTMLIFrameElement | null;
-        if (!iframe) return;
+      // Tap in middle zone for menu toggle
+      const iframe = doc.defaultView?.frameElement as HTMLIFrameElement | null;
+      if (!iframe) return;
 
-        const iframeRect = iframe.getBoundingClientRect();
-        const viewportX = iframeRect.left + touch.clientX;
+      const iframeRect = iframe.getBoundingClientRect();
+      const viewportX = iframeRect.left + touch.clientX;
 
-        window.postMessage({
-          type: 'iframe-click',
-          clientX: viewportX,
-          clientY: iframeRect.top + touch.clientY,
-          iframeLeft: iframeRect.left,
-          iframeWidth: iframeRect.width,
-          eventClientX: touch.clientX,
-          target: (event.target as HTMLElement)?.tagName
-        }, '*');
-      }
+      window.postMessage({
+        type: 'iframe-click',
+        clientX: viewportX,
+        clientY: iframeRect.top + touch.clientY,
+        iframeLeft: iframeRect.left,
+        iframeWidth: iframeRect.width,
+        eventClientX: touch.clientX,
+        target: (event.target as HTMLElement)?.tagName
+      }, '*');
     }
-
-    this.isTextSelectionInProgress = false;
   }
 
   private handleSelectionEnd(doc: Document): void {
-    setTimeout(() => {
-      const selection = doc.defaultView?.getSelection();
-      if (!selection || selection.isCollapsed || selection.rangeCount === 0) {
-        return;
-      }
+    const selection = doc.defaultView?.getSelection();
+    if (!selection || selection.isCollapsed || selection.rangeCount === 0) {
+      return;
+    }
 
-      const range = selection.getRangeAt(0);
-      const text = range.toString().trim();
-      if (!text) return;
+    const originalRange = selection.getRangeAt(0);
+    // Clone the range because removeAllRanges() might detach the original one
+    const range = originalRange.cloneRange();
+    const text = selection.toString().trim();
+    if (!text) return;
 
-      const contents = this.viewCallbacks?.getContents();
-      if (!contents || contents.length === 0) return;
+    // THE HACK: Clear and restore to kill the native iOS menu
+    // This flickers the selection for ~10ms but effectively suppresses the system popup
+    this.isBlinking = true;
 
-      const {index} = contents[0];
-      const cfi = this.viewCallbacks?.getCFI(index, range);
+    try {
+      selection.removeAllRanges();
 
-      if (cfi) {
-        const iframe = doc.defaultView?.frameElement as HTMLIFrameElement | null;
-        const rangeRect = range.getBoundingClientRect();
-        let popupX = rangeRect.left + (rangeRect.width / 2);
-        let selectionTop = rangeRect.top;
-        let selectionBottom = rangeRect.bottom;
+      setTimeout(() => {
+        try {
+          // Re-add the range so our logic can work
+          selection.addRange(range);
 
-        if (iframe) {
-          const iframeRect = iframe.getBoundingClientRect();
-          popupX = iframeRect.left + rangeRect.left + (rangeRect.width / 2);
-          selectionTop = iframeRect.top + rangeRect.top;
-          selectionBottom = iframeRect.top + rangeRect.bottom;
+          // FORCE LAYOUT/EVENTS: Simulate user interaction to ensure popup shows
+          // This mimics the "swipe" effect the user described
+          doc.dispatchEvent(new Event('selectionchange'));
+          doc.defaultView?.scrollBy(0, 1);
+          doc.defaultView?.scrollBy(0, -1);
+        } catch (e) {
+          console.error('Failed to restore selection range', e);
         }
 
-        const minSpaceAbove = 120;
-        const showBelow = selectionTop < minSpaceAbove;
+        // Allow time for event propagation to settle before clearing flag
+        setTimeout(() => {
+          this.isBlinking = false;
+        }, 100);
 
-        let popupY: number;
-        if (showBelow) {
-          popupY = selectionBottom + 10;
-        } else {
-          popupY = selectionTop - 50;
+        const contents = this.viewCallbacks?.getContents();
+        if (!contents || contents.length === 0) return;
+
+        const { index } = contents[0];
+        const cfi = this.viewCallbacks?.getCFI(index, range);
+
+        if (cfi) {
+          const iframe = doc.defaultView?.frameElement as HTMLIFrameElement | null;
+          const rangeRect = range.getBoundingClientRect();
+          let popupX = rangeRect.left + (rangeRect.width / 2);
+          let selectionTop = rangeRect.top;
+          let selectionBottom = rangeRect.bottom;
+
+          if (iframe) {
+            const iframeRect = iframe.getBoundingClientRect();
+            popupX = iframeRect.left + rangeRect.left + (rangeRect.width / 2);
+            selectionTop = iframeRect.top + rangeRect.top;
+            selectionBottom = iframeRect.top + rangeRect.bottom;
+          }
+
+          const minSpaceAbove = 120;
+          const showBelow = selectionTop < minSpaceAbove;
+
+          let popupY: number;
+          if (showBelow) {
+            popupY = selectionBottom + 10;
+          } else {
+            popupY = selectionTop - 50;
+          }
+
+          popupX = Math.max(100, Math.min(popupX, window.innerWidth - 150));
+
+          this.eventSubject.next({
+            type: 'text-selected',
+            detail: { text, cfi, range, index },
+            popupPosition: { x: popupX, y: popupY, showBelow }
+          });
         }
-
-        popupX = Math.max(100, Math.min(popupX, window.innerWidth - 150));
-
-        this.eventSubject.next({
-          type: 'text-selected',
-          detail: {text, cfi, range, index},
-          popupPosition: {x: popupX, y: popupY, showBelow}
-        });
-      }
-    }, 10);
+      }, 10);
+    } catch (e) {
+      this.isBlinking = false;
+    }
   }
 
   private handleIframeClickMessage(data: any): void {
@@ -460,7 +514,7 @@ export class ReaderEventService {
       this.viewCallbacks?.next();
       setTimeout(() => this.isNavigating = false, 300);
     } else {
-      this.eventSubject.next({type: 'middle-single-tap'});
+      this.eventSubject.next({ type: 'middle-single-tap' });
     }
   }
 }

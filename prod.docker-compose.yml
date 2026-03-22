@@ -1,0 +1,32 @@
+services:
+  booklore:
+    build: .
+    container_name: booklore
+    ports:
+      - "6060:6060"
+    environment:
+      - TZ=America/Phoenix
+      - BOOKLORE_PORT=6060
+      - DATABASE_URL=jdbc:mariadb://mariadb:3306/booklore
+      - DATABASE_USERNAME=bookloreuser
+      - DATABASE_PASSWORD=your_strong_password
+    volumes:
+      - /home/arao/booklore/books:/books
+      - /home/arao/booklore/data:/app/data
+      - /home/arao/booklore/bookdrop:/bookdrop
+    depends_on:
+      - mariadb
+    restart: unless-stopped
+
+  mariadb:
+    image: mariadb:11.4
+    container_name: booklore-db
+    environment:
+      - TZ=Etc/UTC  # or America/Phoenix if preferred
+      - MARIADB_ROOT_PASSWORD=your_root_password
+      - MARIADB_DATABASE=booklore
+      - MARIADB_USER=bookloreuser
+      - MARIADB_PASSWORD=your_strong_password
+    volumes:
+      - /home/arao/booklore/db:/var/lib/mysql
+    restart: unless-stopped
